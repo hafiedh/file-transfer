@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package healthcheck.v2;
+
+option go_package = "healthcheck/v2";
+
+// The health check service definition.
+service HealthCheckService {
+  // A simple health check request.
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// The request message containing no parameters.
+message HealthCheckRequest {
+}
+
+// The response message containing the health check details.
+message HealthCheckResponse {
+  string message = 1;
+  string server_time = 2;
+  string version = 3;
+}
+
+// this proto should be in another service for shared use
