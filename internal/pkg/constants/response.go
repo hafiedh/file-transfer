@@ -13,7 +13,7 @@ const (
 )
 
 type DefaultResponse struct {
-	Data    interface{} `json:"data"`
+	Data    interface{} `json:"data,omitempty"`
 	Message string      `json:"message"`
 	Errors  []string    `json:"errors"`
 	Status  int         `json:"status"`

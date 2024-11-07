@@ -48,7 +48,7 @@ func NewService(fileTransferRepo repositories.FileTransfer, maxConcurrent int, i
 }
 
 func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multipart.FileHeader, values map[string][]string) (resp constants.DefaultResponse, err error) {
-	uploadCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	resp = constants.DefaultResponse{
@@ -79,7 +79,6 @@ func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multi
 				select {
 				case workerErrors <- err:
 				default:
-					// Channel is full, log the error
 					slog.ErrorContext(uploadCtx, "worker error", "error", err)
 				}
 			}
@@ -325,13 +324,7 @@ func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-func (f *FileTransfer) PresignedFile(ctx context.Context, id int64) (resp constants.DefaultResponse, err error) {
-	resp = constants.DefaultResponse{
-		Message: constants.MESSAGE_FAILED,
-		Status:  http.StatusInternalServerError,
-		Data:    struct{}{},
-		Errors:  make([]string, 0),
-	}
+func (f *FileTransfer) PresignedFile(ctx context.Context, id int64) (resp FilePresignedUrlResponse, err error) {
 	metaData, err := f.fileTransferRepo.FindByID(ctx, id)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to find metadata", "error", err)
@@ -353,12 +346,15 @@ func (f *FileTransfer) PresignedFile(ctx context.Context, id int64) (resp consta
 	default:
 		return resp, fmt.Errorf("unsupported url: %s", metaData.URL)
 	}
-	resp.Message = constants.MESSAGE_SUCCESS
-	resp.Status = http.StatusOK
-	resp.Data = struct {
-		URL string `json:"url"`
-	}{
-		URL: presignedURL,
+	resp = FilePresignedUrlResponse{
+		Data: FilePresigned{
+			Url: presignedURL,
+		},
+		DefaultResponse: constants.DefaultResponse{
+			Message: constants.MESSAGE_SUCCESS,
+			Status:  http.StatusOK,
+			Errors:  make([]string, 0),
+		},
 	}
 	return
 

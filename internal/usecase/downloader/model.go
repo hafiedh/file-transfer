@@ -3,6 +3,8 @@ package downloader
 import (
 	"io"
 	"mime/multipart"
+
+	"hafiedh.com/downloader/internal/pkg/constants"
 )
 
 type (
@@ -31,6 +33,14 @@ type (
 		FileName string
 		URL      string
 		Error    error
+	}
+
+	FilePresignedUrlResponse struct {
+		Data FilePresigned `json:"data"`
+		constants.DefaultResponse
+	}
+	FilePresigned struct {
+		Url string `json:"url"`
 	}
 )
 

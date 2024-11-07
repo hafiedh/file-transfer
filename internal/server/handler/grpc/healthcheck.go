@@ -18,7 +18,6 @@ func NewHealthCheckHandler(healthCheckService healthcheck.Service) pb.HealthChec
 }
 
 func (h *healthCheckHandler) HealthCheck(ctx context.Context, req *pb.HealthCheckRequest) (*pb.HealthCheckResponse, error) {
-
 	res, err := h.healthCheckService.HealthCheck(ctx)
 	if err != nil {
 		slog.Error("failed to health check err=%v\n", err)

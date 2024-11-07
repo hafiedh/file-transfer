@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	googleGrpc "google.golang.org/grpc"
+	pbFile "hafiedh.com/downloader/gen/go/file_transfer/v2"
 	pb "hafiedh.com/downloader/gen/go/healthcheck/v2"
 	"hafiedh.com/downloader/internal/infrastructure/container"
 )
@@ -25,6 +26,7 @@ func StartService(container *container.Container) {
 	go grpcServer.Start(
 		func(server *googleGrpc.Server) {
 			pb.RegisterHealthCheckServiceServer(server, handler.HealthCheckHandler)
+			pbFile.RegisterFileTransferServiceServer(server, handler.FileTransferHandler)
 		},
 	)
 	AddShutdownHook(grpcServer, container.Echo, container.PsqlDB)

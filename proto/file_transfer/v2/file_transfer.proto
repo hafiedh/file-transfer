@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package file_transfer.v2;
+
+option go_package = "file_transfer/v2";
+
+service FileTransferService {
+  rpc UploadFile(stream UploadFileRequest) returns (UploadFileResponse) {}
+  rpc GetPresignedURL(GetPresignedURLRequest) returns (GetPresignedURLResponse) {}
+}
+
+message UploadFileRequest {
+  oneof data {
+    FileInfo file_info = 1;
+    bytes chunk = 2;
+  }
+}
+
+message FileInfo {
+  string filename = 1;
+  string key = 2;
+  int64 size = 3;
+}
+
+message UploadProgress {
+  string filename = 1;
+  int64 bytes_transferred = 2;
+  int64 total_bytes = 3;
+  double percentage = 4;
+}
+
+message UploadFileResponse {
+  string message = 1;
+  int32 status = 2;
+  repeated string errors = 3;
+  repeated UploadResult results = 4;
+}
+
+message UploadResult {
+  string filename = 1;
+  string url = 2;
+  string error = 3;
+}
+
+message GetPresignedURLRequest {
+  int64 file_id = 1;
+}
+
+message GetPresignedURLResponse {
+  Data data = 1;
+  string message = 2;
+  repeated string errors = 3;
+  int32 status = 4;
+}
+
+message Data {
+  string url = 1;
+}
