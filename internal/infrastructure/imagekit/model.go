@@ -5,6 +5,7 @@ type (
 		FileName          string `json:"fileName"`
 		UseUniqueFileName string `json:"useUniqueFileName"`
 		Folder            string `json:"folder"`
+		IsPrivateFile     string `json:"isPrivateFile"`
 		Iat               int64  `json:"iat"`
 		Exp               int64  `json:"exp"`
 	}

@@ -252,7 +252,8 @@ func (f *FileTransfer) processFile(ctx context.Context, job FileUploadJob, provi
 		metaData = &entities.MetaData{
 			URL:       wrapperResp.URL,
 			FileName:  job.FileHeader.Filename,
-			FileSize:  int(wrapperResp.Size),
+			FileSize:  wrapperResp.Size,
+			FileID:    wrapperResp.FileID,
 			Extension: strings.ToLower(strings.TrimPrefix(filepath.Ext(job.FileHeader.Filename), ".")),
 			Status:    "UPLOADED",
 			CreatedAt: time.Now(),
@@ -295,14 +296,6 @@ func (f *FileTransfer) processFile(ctx context.Context, job FileUploadJob, provi
 	}
 }
 
-func (f *FileTransfer) DownloadFile(ctx context.Context, url, destinationPath string) (resp constants.DefaultResponse, err error) {
-	f.semaphore <- struct{}{}
-	defer func() {
-		<-f.semaphore
-	}()
-	return
-}
-
 func countTotalFiles(files map[string][]*multipart.FileHeader) int {
 	total := 0
 	for _, headers := range files {
@@ -330,4 +323,43 @@ func isValidProvider(provider string) bool {
 
 func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func (f *FileTransfer) PresignedFile(ctx context.Context, id int64) (resp constants.DefaultResponse, err error) {
+	resp = constants.DefaultResponse{
+		Message: constants.MESSAGE_FAILED,
+		Status:  http.StatusInternalServerError,
+		Data:    struct{}{},
+		Errors:  make([]string, 0),
+	}
+	metaData, err := f.fileTransferRepo.FindByID(ctx, id)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to find metadata", "error", err)
+		err = fmt.Errorf("failed to find metadata: %w", err)
+		return
+	}
+
+	var presignedURL string
+	switch {
+	case strings.HasPrefix(metaData.URL, config.GetString("imagekit.baseURL")):
+		presignedURL, err = f.imageKit.PresignURL(ctx, metaData.URL)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to presign url", "error", err)
+			err = fmt.Errorf("failed to presign url: %w", err)
+			return
+		}
+	case strings.HasPrefix(metaData.URL, "https://storage.googleapis.com"):
+		return resp, fmt.Errorf("google presign url not implemented")
+	default:
+		return resp, fmt.Errorf("unsupported url: %s", metaData.URL)
+	}
+	resp.Message = constants.MESSAGE_SUCCESS
+	resp.Status = http.StatusOK
+	resp.Data = struct {
+		URL string `json:"url"`
+	}{
+		URL: presignedURL,
+	}
+	return
+
 }

@@ -17,7 +17,7 @@ func SetupRouter(e *echo.Echo, cnt *container.Container) {
 	files := base.Group("/files")
 	{
 		files.POST("/upload", h.downloaderHandler.Uploader)
-		files.GET("/download", h.downloaderHandler.Downloader)
+		files.GET("/:id/presigned", h.downloaderHandler.Presigned)
 	}
 
 }

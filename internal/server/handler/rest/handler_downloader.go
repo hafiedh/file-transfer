@@ -1,8 +1,10 @@
 package rest
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -87,23 +89,41 @@ func (h *downloadHandler) Uploader(ec echo.Context) (err error) {
 	})
 }
 
-func (h *downloadHandler) Downloader(ec echo.Context) (err error) {
+func (h *downloadHandler) Presigned(ec echo.Context) (err error) {
 	ctx := ec.Request().Context()
 
-	resp, err := h.downloaderService.DownloadFile(ctx, "test", "test")
+	id := ec.Param("id")
+	if id == "" {
+		slog.ErrorContext(ctx, "id is required")
+		return ec.JSON(http.StatusBadRequest, constants.DefaultResponse{
+			Message: "id is required",
+			Status:  http.StatusBadRequest,
+			Data:    struct{}{},
+			Errors:  []string{"id is required"},
+		})
+	}
+
+	fileID, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to upload file", "error", err)
+		slog.ErrorContext(ctx, "failed to parse id", "error", err)
+		err = fmt.Errorf("failed to parse id: %w", err)
+		return ec.JSON(http.StatusBadRequest, constants.DefaultResponse{
+			Message: "failed to parse id",
+			Status:  http.StatusBadRequest,
+			Data:    struct{}{},
+			Errors:  []string{err.Error()},
+		})
+	}
+
+	resp, err := h.downloaderService.PresignedFile(ctx, fileID)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to presign file", "error", err)
 		return ec.JSON(http.StatusInternalServerError, constants.DefaultResponse{
-			Message: "failed to upload file",
+			Message: "failed to presign file",
 			Status:  http.StatusInternalServerError,
 			Data:    struct{}{},
 			Errors:  []string{err.Error()},
 		})
 	}
-	return ec.JSON(http.StatusOK, constants.DefaultResponse{
-		Message: "success",
-		Status:  http.StatusOK,
-		Data:    resp.Data,
-		Errors:  make([]string, 0),
-	})
+	return ec.JSON(http.StatusOK, resp)
 }

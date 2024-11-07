@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
-	"net/http/httputil"
+	"strings"
 	"time"
 
+	ik "github.com/imagekit-developer/imagekit-go"
+	ikUrl "github.com/imagekit-developer/imagekit-go/url"
 	"hafiedh.com/downloader/internal/config"
 	"hafiedh.com/downloader/internal/pkg/utils"
 )
@@ -20,7 +22,7 @@ import (
 type (
 	ImageKitWrapper interface {
 		UploadFile(ctx context.Context, file io.Reader, key, fileName string) (UploadFileResp UploadResponse, err error)
-		DownloadImage(ctx context.Context, url string) (file io.Reader, err error)
+		PresignURL(ctx context.Context, url string) (presignedURL string, err error)
 	}
 
 	imageKitWrapper struct {
@@ -42,7 +44,7 @@ func NewImageKitWrapper() ImageKitWrapper {
 }
 
 func (i *imageKitWrapper) UploadFile(ctx context.Context, file io.Reader, key, fileName string) (UploadFileResp UploadResponse, err error) {
-	path := fmt.Sprintf("%s%s", config.GetString("imagekit.baseURL"), config.GetString("imagekit.uploadPath"))
+	path := fmt.Sprintf("%s%s", config.GetString("imagekit.baseuploadURL"), config.GetString("imagekit.uploadPath"))
 
 	if path == "" {
 		slog.ErrorContext(ctx, "imagekit base URL is empty")
@@ -52,6 +54,7 @@ func (i *imageKitWrapper) UploadFile(ctx context.Context, file io.Reader, key, f
 	uploadReq := UploadRequest{
 		FileName:          fileName,
 		UseUniqueFileName: "true",
+		IsPrivateFile:     "true",
 		Folder:            config.GetString("imagekit.uploadFolder"),
 	}
 	token, err := i.generateToken(uploadReq)
@@ -103,6 +106,12 @@ func (i *imageKitWrapper) UploadFile(ctx context.Context, file io.Reader, key, f
 		return
 	}
 
+	if err = writer.WriteField("isPrivateFile", uploadReq.IsPrivateFile); err != nil {
+		slog.ErrorContext(ctx, "[ImageKit] failed to write field", "error", err)
+		err = fmt.Errorf("failed to write field: %w", err)
+		return
+	}
+
 	if err = writer.Close(); err != nil {
 		slog.ErrorContext(ctx, "[ImageKit] failed to close writer", "error", err)
 		err = fmt.Errorf("failed to close writer: %w", err)
@@ -129,15 +138,6 @@ func (i *imageKitWrapper) UploadFile(ctx context.Context, file io.Reader, key, f
 	}
 	defer uploadResp.Body.Close()
 
-	debugResp, err := httputil.DumpResponse(uploadResp, true)
-	if err != nil {
-		slog.ErrorContext(ctx, "[ImageKit] failed to dump response", "error", err)
-		err = fmt.Errorf("failed to dump response: %w", err)
-		return
-	}
-
-	slog.DebugContext(ctx, "[ImageKit] response", "response", string(debugResp))
-
 	if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated {
 		var badResponse BadResponse
 		slog.ErrorContext(ctx, "[ImageKit] failed to upload file", "status", uploadResp.Status)
@@ -160,11 +160,6 @@ func (i *imageKitWrapper) UploadFile(ctx context.Context, file io.Reader, key, f
 	return uploadResponse, nil
 }
 
-func (i *imageKitWrapper) DownloadImage(ctx context.Context, url string) (file io.Reader, err error) {
-	// download image
-	return
-}
-
 func (i *imageKitWrapper) generateToken(req UploadRequest) (token string, err error) {
 	iat := time.Now().Unix()
 	exp := time.Now().Add(10 * time.Minute).Unix()
@@ -173,6 +168,7 @@ func (i *imageKitWrapper) generateToken(req UploadRequest) (token string, err er
 		FileName:          req.FileName,
 		UseUniqueFileName: req.UseUniqueFileName,
 		Folder:            req.Folder,
+		IsPrivateFile:     req.IsPrivateFile,
 		Iat:               iat,
 		Exp:               exp,
 	}
@@ -180,5 +176,27 @@ func (i *imageKitWrapper) generateToken(req UploadRequest) (token string, err er
 	if err != nil {
 		return
 	}
+	return
+}
+
+func (i *imageKitWrapper) PresignURL(ctx context.Context, url string) (presignedURL string, err error) {
+	newIk := ik.NewFromParams(
+		ik.NewParams{
+			PrivateKey:  i.privateKey,
+			PublicKey:   i.publicKey,
+			UrlEndpoint: config.GetString("imagekit.urlEndpoint"),
+		},
+	)
+	presignedURL, err = newIk.Url(
+		ikUrl.UrlParam{
+			Path:          strings.ReplaceAll(url, fmt.Sprintf("%s/", config.GetString("imagekit.urlEndpoint")), ""),
+			Signed:        true,
+			ExpireSeconds: 3600,
+			UnixTime: func() int64 {
+				return time.Now().Unix()
+			},
+		},
+	)
+
 	return
 }
