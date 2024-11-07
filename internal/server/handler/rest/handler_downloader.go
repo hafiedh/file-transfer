@@ -90,6 +90,17 @@ func (h *downloadHandler) Uploader(ec echo.Context) (err error) {
 }
 
 func (h *downloadHandler) Presigned(ec echo.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.ErrorContext(ec.Request().Context(), "panic occurred", "error", r)
+			ec.JSON(http.StatusInternalServerError, constants.DefaultResponse{
+				Message: "internal server error",
+				Status:  http.StatusInternalServerError,
+				Data:    struct{}{},
+				Errors:  []string{"internal server error"},
+			})
+		}
+	}()
 	ctx := ec.Request().Context()
 
 	id := ec.Param("id")
