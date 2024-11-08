@@ -1,17 +1,28 @@
-FROM golang:1.23 as build
+FROM golang:latest as builder
+LABEL MAINTAINER="Muhammad Hafiedh"
 
-WORKDIR /app
+WORKDIR /go/src/file-service
 COPY . .
 
-RUN make compile
+RUN go mod download && \
+   go mod verify
 
-FROM alpine:3.13
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -a -installsuffix cgo -o /go/bin/file-service .
 
-COPY --from=build /usr/local/go/lib/time/zoneinfo.zip /
-ENV TZ=Asia/Jakarta
-ENV ZONEINFO=/zoneinfo.zip
+# Final stage using `scratch`
+FROM scratch
 
-COPY --from=build /app/bin/app /app
+# Copy the built binary and environment file
+COPY --from=builder /go/bin/file-service /app/file-service
+COPY --from=builder /go/src/file-service/.env /app/.env
 
-EXPOSE 3000
-ENTRYPOINT ["/app"]
+# Copy CA certificates
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+USER 1000
+WORKDIR /app
+
+EXPOSE 8090
+EXPOSE 50052
+
+ENTRYPOINT ["/app/file-service", "-env", "/app/.env"]

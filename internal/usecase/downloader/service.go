@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
+	"github.com/google/uuid"
 	"hafiedh.com/downloader/internal/config"
 	"hafiedh.com/downloader/internal/domain/entities"
 	"hafiedh.com/downloader/internal/domain/repositories"
@@ -48,7 +49,8 @@ func NewService(fileTransferRepo repositories.FileTransfer, maxConcurrent int, i
 }
 
 func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multipart.FileHeader, values map[string][]string) (resp constants.DefaultResponse, err error) {
-	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Use a longer timeout for large uploads
+	uploadCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 
 	resp = constants.DefaultResponse{
@@ -57,8 +59,17 @@ func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multi
 		Data:    struct{}{},
 	}
 
+	// Add request ID for better tracking
+	requestID := uuid.New().String()
+	logger := slog.With(
+		"requestID", requestID,
+		"totalFiles", countTotalFiles(files),
+	)
+	logger.InfoContext(uploadCtx, "starting upload batch")
+
 	provider := config.GetString("multipart.uploadProvider")
 	if !isValidProvider(provider) {
+		logger.ErrorContext(uploadCtx, "invalid provider", "provider", provider)
 		return resp, fmt.Errorf("invalid upload provider: %s", provider)
 	}
 
@@ -67,24 +78,40 @@ func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multi
 		return resp, fmt.Errorf("no files to upload")
 	}
 
+	// Add file size validation
+	if err := f.validateFiles(files); err != nil {
+		logger.ErrorContext(uploadCtx, "file size validation failed", "error", err)
+		return resp, fmt.Errorf("file size validation failed: %w", err)
+	}
+
 	var wg sync.WaitGroup
 	results := make(chan UploadResult, totalFiles)
 	jobs := make(chan FileUploadJob, totalFiles)
-
 	workerErrors := make(chan error, f.Concurrency)
 
+	// Monitor worker health
+	healthCtx, healthCancel := context.WithCancel(uploadCtx)
+	defer healthCancel()
+
+	go f.monitorWorkerHealth(healthCtx, workerErrors, logger)
+
+	// Start workers with improved error handling
 	for i := 0; i < f.Concurrency; i++ {
+		workerID := i
 		go func() {
 			if err := f.worker(uploadCtx, jobs, results, provider); err != nil {
 				select {
-				case workerErrors <- err:
+				case workerErrors <- fmt.Errorf("worker %d error: %w", workerID, err):
 				default:
-					slog.ErrorContext(uploadCtx, "worker error", "error", err)
+					logger.ErrorContext(uploadCtx, "worker error",
+						"workerID", workerID,
+						"error", err)
 				}
 			}
 		}()
 	}
 
+	// Dispatch jobs with backpressure
 	go func() {
 		defer close(jobs)
 		for key, fileHeaders := range files {
@@ -94,15 +121,35 @@ func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multi
 					return
 				default:
 					wg.Add(1)
-					select {
-					case jobs <- FileUploadJob{
-						Key:        key,
-						FileHeader: fileHeader,
-						Result:     results,
-					}:
-					case <-uploadCtx.Done():
+
+					// Add retry logic for job submission
+					err := retry.Do(
+						func() error {
+							select {
+							case jobs <- FileUploadJob{
+								Key:        key,
+								FileHeader: fileHeader,
+								Result:     results,
+								RequestID:  requestID,
+							}:
+								return nil
+							case <-uploadCtx.Done():
+								wg.Done()
+								return uploadCtx.Err()
+							case <-time.After(5 * time.Second):
+								return fmt.Errorf("timeout queuing job")
+							}
+						},
+						retry.Attempts(3),
+						retry.Delay(time.Second),
+						retry.Context(uploadCtx),
+					)
+
+					if err != nil {
+						logger.ErrorContext(uploadCtx, "failed to queue job",
+							"filename", fileHeader.Filename,
+							"error", err)
 						wg.Done()
-						return
 					}
 				}
 			}
@@ -116,14 +163,23 @@ func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multi
 
 	var uploadErrors []error
 	successCount := 0
+	uploadStartTime := time.Now()
 
+	// Process results with timeout
 	for {
 		select {
 		case <-uploadCtx.Done():
+			logger.ErrorContext(uploadCtx, "upload operation cancelled or timed out",
+				"duration", time.Since(uploadStartTime),
+				"successCount", successCount)
 			uploadErrors = append(uploadErrors, fmt.Errorf("upload operation cancelled or timed out: %w", uploadCtx.Err()))
 			goto HANDLE_RESULTS
 
 		case err := <-workerErrors:
+			logger.ErrorContext(uploadCtx, "critical worker error",
+				"duration", time.Since(uploadStartTime),
+				"successCount", successCount,
+				"error", err)
 			uploadErrors = append(uploadErrors, fmt.Errorf("worker error: %w", err))
 			goto HANDLE_RESULTS
 
@@ -133,18 +189,32 @@ func (f *FileTransfer) UploadFile(ctx context.Context, files map[string][]*multi
 			}
 			if result.Error != nil {
 				if isContextCanceled(result.Error) {
+					logger.WarnContext(uploadCtx, "upload cancelled for file",
+						"filename", result.FileName,
+						"error", result.Error)
 					uploadErrors = append(uploadErrors, fmt.Errorf("upload cancelled for %s: %w", result.FileName, result.Error))
 				} else {
+					logger.ErrorContext(uploadCtx, "upload failed for file",
+						"filename", result.FileName,
+						"error", result.Error)
 					uploadErrors = append(uploadErrors, fmt.Errorf("%s: %w", result.FileName, result.Error))
 				}
 			} else {
 				successCount++
+				logger.InfoContext(uploadCtx, "file upload successful",
+					"filename", result.FileName,
+					"url", result.URL)
 			}
 			wg.Done()
 		}
 	}
 
 HANDLE_RESULTS:
+	logger.InfoContext(uploadCtx, "upload batch completed",
+		"duration", time.Since(uploadStartTime),
+		"successCount", successCount,
+		"errorCount", len(uploadErrors))
+
 	if len(uploadErrors) > 0 {
 		if successCount == 0 {
 			resp.Message = constants.MESSAGE_FAILED
@@ -322,6 +392,41 @@ func isValidProvider(provider string) bool {
 
 func isContextCanceled(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func (f *FileTransfer) monitorWorkerHealth(ctx context.Context, workerErrors <-chan error, logger *slog.Logger) {
+	errorCount := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-workerErrors:
+			errorCount++
+			logger.ErrorContext(ctx, "worker error detected",
+				"errorCount", errorCount,
+				"error", err)
+
+			// Consider implementing recovery logic here
+			if errorCount > f.Concurrency/2 {
+				logger.ErrorContext(ctx, "critical error threshold reached",
+					"errorCount", errorCount,
+					"concurrency", f.Concurrency)
+			}
+		}
+	}
+}
+
+func (f *FileTransfer) validateFiles(files map[string][]*multipart.FileHeader) error {
+	const maxFileSize = 100 * 1024 * 1024 // 100MB
+
+	for _, fileHeaders := range files {
+		for _, header := range fileHeaders {
+			if header.Size > maxFileSize {
+				return fmt.Errorf("file %s exceeds maximum size of 100MB", header.Filename)
+			}
+		}
+	}
+	return nil
 }
 
 func (f *FileTransfer) PresignedFile(ctx context.Context, id int64) (resp FilePresignedUrlResponse, err error) {

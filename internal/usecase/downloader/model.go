@@ -27,6 +27,7 @@ type (
 		Key        string
 		FileHeader *multipart.FileHeader
 		Result     chan UploadResult
+		RequestID  string
 	}
 
 	UploadResult struct {

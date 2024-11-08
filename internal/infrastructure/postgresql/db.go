@@ -32,7 +32,9 @@ func NewConnection(dbConf *config.PostgreSQLDB) (PostgresImpl, error) {
 }
 
 func connect(config *config.PostgreSQLDB) (pool *pgxpool.Pool, err error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s", config.Username, config.Password, config.Host, config.Port, config.Name)
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		config.Host, config.Port, config.Username, config.Password, config.Name)
+
 	dbConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		slog.Error("Failed to parse config", "error", err)
@@ -46,7 +48,7 @@ func connect(config *config.PostgreSQLDB) (pool *pgxpool.Pool, err error) {
 	dbConfig.HealthCheckPeriod = config.DefaultHealthCheckPeriod
 	dbConfig.ConnConfig.ConnectTimeout = config.DefaultConnectTimeout
 	dbConfig.BeforeClose = func(conn *pgx.Conn) {
-		slog.Info("Closing connection")
+		slog.Info("Closing connection to database")
 	}
 	dbConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		slog.Info("Connected to database")
@@ -58,6 +60,15 @@ func connect(config *config.PostgreSQLDB) (pool *pgxpool.Pool, err error) {
 		slog.Error("Failed to create connection pool", "error", err)
 		panic(err)
 	}
+
+	// check connection
+	conn, err := pool.Acquire(context.Background())
+	if err != nil {
+		slog.Error("Failed to acquire connection", "error", err)
+		panic(err)
+	}
+
+	defer conn.Release()
 
 	color.Println(color.Green(fmt.Sprintf("⇨ PostgreSQL connected to database %s", config.Name)))
 

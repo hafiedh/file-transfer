@@ -115,7 +115,7 @@ func New() *Container {
 
 	// * Services
 	healthCheckService := healthcheck.NewService().Validate()
-	downloaderService := downloader.NewService(downloaderRepo, 10, imageKit, sseHub)
+	downloaderService := downloader.NewService(downloaderRepo, 5, imageKit, sseHub)
 
 	// * Brokers
 

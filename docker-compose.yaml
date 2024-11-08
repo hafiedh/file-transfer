@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  downloader-db:
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_DB: downloader
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  file-transfer-api:
+    image: hafiedh/file-transfer-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+      - "50052:50052"
+    depends_on:
+      - downloader-db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  postgres_data:
+    driver: local

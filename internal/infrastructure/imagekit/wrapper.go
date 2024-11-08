@@ -3,6 +3,7 @@ package imagekit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -129,7 +130,12 @@ func (i *imageKitWrapper) UploadFile(ctx context.Context, file io.Reader, key, f
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Authorization", i.basicAuth)
 
-	client := &http.Client{}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+	}
 	uploadResp, err := client.Do(req)
 	if err != nil {
 		slog.ErrorContext(ctx, "[ImageKit] failed to perform HTTP request", "error", err)
