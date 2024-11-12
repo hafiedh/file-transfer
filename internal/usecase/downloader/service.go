@@ -354,7 +354,7 @@ func (f *FileTransfer) processFile(ctx context.Context, job FileUploadJob, provi
 	if err != nil {
 		return UploadResult{
 			FileName: job.FileHeader.Filename,
-			Error:    fmt.Errorf("failed to save metadata: %w", err),
+			Error:    fmt.Errorf("failed to save metadata"),
 		}
 	}
 
@@ -430,10 +430,18 @@ func (f *FileTransfer) validateFiles(files map[string][]*multipart.FileHeader) e
 }
 
 func (f *FileTransfer) PresignedFile(ctx context.Context, id int64) (resp FilePresignedUrlResponse, err error) {
+	resp = FilePresignedUrlResponse{
+		DefaultResponse: constants.DefaultResponse{
+			Message: constants.MESSAGE_FAILED,
+			Status:  http.StatusInternalServerError,
+			Errors:  make([]string, 0),
+		},
+	}
+
 	metaData, err := f.fileTransferRepo.FindByID(ctx, id)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to find metadata", "error", err)
-		err = fmt.Errorf("failed to find metadata: %w", err)
+		err = fmt.Errorf("failed to find metadata")
 		return
 	}
 

@@ -60,6 +60,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spf13/cast v1.3.1 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	golang.org/x/crypto v0.27.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
 	google.golang.org/genproto v0.0.0-20210226172003-ab064af71705 // indirect
